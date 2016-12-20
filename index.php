@@ -19,110 +19,123 @@
 		file_put_contents('.htaccess', $htaccess);
 	}
 
-	////////////////////////////////////////////////
 
+	// Get YouTube video ID from URL
 	$id = str_replace(SCRIPT_PATH, '', $_SERVER['REQUEST_URI']);
 
 	if (!empty($id))
 	{
+		// Load YouTube HTML
 		$ytDoc = new DOMDocument();
 		@$ytDoc->loadHTML('<?xml encoding="UTF-8">' . @file_get_contents('https://www.youtube.com/watch?v=' . $id));
 
+		// Create DOM for Facebook
 		$fbDoc = new DOMDocument();
 		$fbDoc->loadHTML('<?xml encoding="UTF-8"><html><head></head><body></body></html>');
 
+		// Grab video title
 		foreach($ytDoc->getElementsByTagName('title') as $titleTag)
 		{
 			$fbDoc->getElementsByTagName('head')->item(0)->appendChild($fbDoc->importNode($titleTag, true));
 		}
 
+		// Grab meta properties
 		$metaProperties = array();
-
+		$basicProperties = array(
+			'og:title'        => null,
+			'og:description'  => null,
+			'og:image'        => null,
+			'og:video:url'    => null,
+			'og:video:width'  => null,
+			'og:video:height' => null,
+		);
 		foreach($ytDoc->getElementsByTagName('meta') as $metaTag)
 		{
-			if ($metaTag->getAttribute('property'))
-				$metaProperties[$metaTag->getAttribute('property')] = $metaTag->getAttribute('content');
+			$property = $metaTag->getAttribute('property');
+
+			// Remove secure URL to fool Facebook
+			if ($property == 'og:video:secure_url')
+				continue;
+
+			if ($property)
+			{
+				$content = $metaTag->getAttribute('content');
+
+				$metaProperties[] = array('property' => $property, 'content' => $content);
+
+				if (array_key_exists($property, $basicProperties) && ($basicProperties[$property] === null))
+					$basicProperties[$property] = $content;
+			}
 		}
+
+		// Create replacement meta properties
+		$metaReplacements = array(
+			'og:site_name' => SITE_NAME,
+			'og:url'       => SITE_URL . SCRIPT_PATH . $id,
+			//'og:video'     => $basicProperties['og:video:url'],
+
+			'twitter:card'          => 'summary_large_image',
+			'twitter:title'         => $basicProperties['og:title'],
+			'twitter:site'          => TWITTER,
+			'twitter:description'   => $basicProperties['og:description'],
+			'twitter:image'         => $basicProperties['og:image'],
+		);
+
+		// Add embedded player card data if domain is whitelisted on Twitter
+		if (TWITTER_CARD_WHITELISTED)
+			$metaReplacements = array_merge($metaReplacements, array(
+				'twitter:card'          => 'player',
+				'twitter:player'        => 'https://www.youtube.com/embed/' . $id,
+				'twitter:player:width'  => $basicProperties['og:video:width'],
+				'twitter:player:height' => $basicProperties['og:video:height'],
+			));
+
+		// Create META tags data
 
 		$newMetaData = array(
 			array(
 				'name' => 'description',
-				'content' => $metaProperties['og:description'],
+				'content' => $basicProperties['og:description'],
 			),
-
 			array(
 				'itemprop' => 'name',
-				'content' => $metaProperties['og:title'],
+				'content' => $basicProperties['og:title'],
 			),
 			array(
 				'itemprop' => 'description',
-				'content' => $metaProperties['og:description'],
+				'content' => $basicProperties['og:description'],
 			),
 			array(
 				'itemprop' => 'image',
-				'content' => $metaProperties['og:image'],
+				'content' => $basicProperties['og:image'],
 			),
-
-			array(
-				'property' => 'og:title',
-				'content' => $metaProperties['og:title'],
-			),
-			array(
-				'property' => 'og:description',
-				'content' => $metaProperties['og:description'],
-			),
-			array(
-				'property' => 'og:image',
-				'content' => $metaProperties['og:image'],
-			),
-			array(
-				'property' => 'og:site_name',
-				'content' => SITE_NAME,
-			),
-
-			array(
-				'property' => 'og:video',
-				'content' => $metaProperties['og:video:url'],
-			),
-			array(
-				'property' => 'og:video:type',
-				'content' => $metaProperties['og:video:type'],
-			),
-			array(
-				'property' => 'og:video:width',
-				'content' => $metaProperties['og:video:width'],
-			),
-			array(
-				'property' => 'og:video:height',
-				'content' => $metaProperties['og:video:height'],
-			),
-			array(
-				'property' => 'og:type',
-				'content' => 'video',
-			),
-
-			array(
-				'property' => 'twitter:card',
-				'content' => 'summary_large_image',
-			),
-			array(
-				'property' => 'twitter:site',
-				'content' => TWITTER,
-			),
-			array(
-				'property' => 'twitter:title',
-				'content' => $metaProperties['og:title'],
-			),
-			array(
-				'property' => 'twitter:description',
-				'content' => $metaProperties['og:description'],
-			),
-			array(
-				'property' => 'twitter:image',
-				'content' => $metaProperties['og:image'],
-			),
-
 		);
+
+		// Add YouTube meta properties and perfoem replacements
+
+		$metaPropertiesToReplace = $metaReplacements;
+
+		foreach($metaProperties as $tagData)
+		{
+			// This property must be replaced
+			if (array_key_exists($tagData['property'], $metaReplacements))
+			{
+				$tagData['content'] = $metaReplacements[$tagData['property']];
+				unset($metaPropertiesToReplace[$tagData['property']]);
+			}
+
+			$newMetaData[] = $tagData;
+		}
+
+		// Add missing properties that have not been replaced (not found)
+
+		foreach($metaPropertiesToReplace as $property => $content)
+			$newMetaData[] = array(
+				'property' => $property,
+				'content'  => $content,
+			);
+
+		// Generate HTML
 
 		$canonical = $fbDoc->createElement('link');
 		$canonical->setAttribute('rel', 'canonical');
