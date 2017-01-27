@@ -46,8 +46,8 @@
 			'og:description'  => null,
 			'og:image'        => null,
 			'og:video:url'    => null,
-			'og:video:width'  => null,
-			'og:video:height' => null,
+			'og:video:width'  => 1280,
+			'og:video:height' => 720,
 		);
 		foreach($ytDoc->getElementsByTagName('meta') as $metaTag)
 		{
