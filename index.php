@@ -19,7 +19,6 @@
 		file_put_contents('.htaccess', $htaccess);
 	}
 
-
 	// Get YouTube video ID from URL
 	$id = str_replace(SCRIPT_PATH, '', $_SERVER['REQUEST_URI']);
 
@@ -46,9 +45,15 @@
 			'og:description'  => null,
 			'og:image'        => null,
 			'og:video:url'    => null,
-			'og:video:width'  => 1280,
-			'og:video:height' => 720,
+			'og:video:type'   => null,
+			'og:video:width'  => null,
+			'og:video:height' => null,
 		);
+
+		$ignoreProperties = array(
+			'og:restrictions:age'
+		);
+
 		foreach($ytDoc->getElementsByTagName('meta') as $metaTag)
 		{
 			$property = $metaTag->getAttribute('property');
@@ -57,14 +62,22 @@
 			if ($property == 'og:video:secure_url')
 				continue;
 
-			if ($property)
+			if ($property && !in_array($property, $ignoreProperties))
 			{
 				$content = $metaTag->getAttribute('content');
 
-				$metaProperties[] = array('property' => $property, 'content' => $content);
+				// Only deal with video basic properties once
+				if (preg_match('/^og:video:/', $property) && array_key_exists($property, $basicProperties) && ($basicProperties[$property] !== null)) {
+					continue;
+				}
 
-				if (array_key_exists($property, $basicProperties) && ($basicProperties[$property] === null))
+				// Add anything but OG tags
+				if (!preg_match('/^og:/', $property))
+					$metaProperties[] = array('property' => $property, 'content' => $content);
+
+				if (array_key_exists($property, $basicProperties) && ($basicProperties[$property] === null)) {
 					$basicProperties[$property] = $content;
+				}
 			}
 		}
 
@@ -111,7 +124,7 @@
 			),
 		);
 
-		// Add YouTube meta properties and perfoem replacements
+		// Add YouTube meta properties and perform replacements
 
 		$metaPropertiesToReplace = $metaReplacements;
 
@@ -134,6 +147,21 @@
 				'property' => $property,
 				'content'  => $content,
 			);
+
+		// Add safe OG tags
+		$newMetaData = array_merge($newMetaData, array(
+			//array('property' => 'fb:app_id', 'content' => ''),
+			//array('property' => 'og:url', 'content' => SITE_URL . SCRIPT_PATH . 'simple/' . $id),
+			array('property' => 'og:site_name', 'content' => preg_replace('@^https?://@', '', SITE_URL)),
+			array('property' => 'og:type', 'content' => 'video'),
+			array('property' => 'og:title', 'content' => $basicProperties['og:title']),
+			array('property' => 'og:description', 'content' => $basicProperties['og:description']),
+			array('property' => 'og:image', 'content' => $basicProperties['og:image']),
+			array('property' => 'og:video', 'content' => 'http://www.youtube.com/v/' . $id . '?version=3'),
+			array('property' => 'og:video:type', 'content' => 'application/x-shockwave-flash'),
+			array('property' => 'og:video:width', 'content' => '560'),
+			array('property' => 'og:video:height', 'content' => '349')
+		));
 
 		// Generate HTML
 
