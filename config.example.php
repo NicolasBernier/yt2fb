@@ -13,6 +13,7 @@ define('SITE_URL',    'http://www.domain.com'); // Site URL, without path
 
 define('SITE_NAME',   'domain.com');      // Your site name
 define('FB_ADMINS',   '100000000000000'); // Your Facebook profile ID
+define('EMBED_PLAYER', false);            // Embed the YouTube Flash player in Facebook. Will not work on all devices (not recommended)
 
 // Twitter configuration
 

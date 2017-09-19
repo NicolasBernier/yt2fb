@@ -1,12 +1,18 @@
 <?php
 
+	define('MODE_THUMBNAIL', 'thumbnail');
+	define('MODE_PLAYER',    'player');
+
 	// Import configuration
 	include('./config.php');
+
+	if (!defined('EMBED_PLAYER')) {
+		define('EMBED_PLAYER', false);
+	}
 
 	// Update .htaccess file if needed
 	if (!file_exists('.htaccess') || (filemtime('config.php') > filemtime('.htaccess')))
 	{
-
 		$htaccess  = "<IfModule mod_rewrite.c>\n";
 		$htaccess .= "	RewriteEngine On\n";
 		$htaccess .= "	RewriteBase " . SCRIPT_PATH . "\n";
@@ -19,11 +25,31 @@
 		file_put_contents('.htaccess', $htaccess);
 	}
 
-	// Get YouTube video ID from URL
-	$id = str_replace(SCRIPT_PATH, '', $_SERVER['REQUEST_URI']);
+	// Detect if rendering for the Facebook/Twitter agent or the end-user
+	$isSocialBot = preg_match('/(facebookexternalhit|Twitterbot)/i', @$_SERVER['HTTP_USER_AGENT']);
+
+	// Parse path
+	$path = str_replace(SCRIPT_PATH, '', $_SERVER['REQUEST_URI']);
+
+	// Get thumbnail
+	if (preg_match('@^thumbnail/(.+)$@', $path, $matches)) {
+		$id = $matches[1];
+		$mode = MODE_THUMBNAIL;
+	}
+	// Get video player
+	else {
+		$id = $path;
+		$mode = MODE_PLAYER;
+	}
 
 	if (!empty($id))
 	{
+		// Not Facebook parsing data: just redirect to the actual YouTube video
+		if ((!$isSocialBot) && ($mode == MODE_PLAYER)) {
+			header('Location: https://youtu.be/' . $id);
+			exit(0);
+		}
+
 		// Load YouTube HTML
 		$ytDoc = new DOMDocument();
 		@$ytDoc->loadHTML('<?xml encoding="UTF-8">' . @file_get_contents('https://www.youtube.com/watch?v=' . $id));
@@ -81,17 +107,22 @@
 			}
 		}
 
+		// Get thumbnail image URL
+		$thumbnailUrl = EMBED_PLAYER ? $basicProperties['og:image'] : SITE_URL . SCRIPT_PATH . 'thumbnail/' . $id;
+
+		// Get canonical URL
+		$canonicalUrl = SITE_URL . SCRIPT_PATH . $id;
+
 		// Create replacement meta properties
 		$metaReplacements = array(
 			'og:site_name' => SITE_NAME,
-			'og:url'       => SITE_URL . SCRIPT_PATH . $id,
-			//'og:video'     => $basicProperties['og:video:url'],
+			'og:url'       => $canonicalUrl,
 
 			'twitter:card'          => 'summary_large_image',
 			'twitter:title'         => $basicProperties['og:title'],
 			'twitter:site'          => TWITTER,
 			'twitter:description'   => $basicProperties['og:description'],
-			'twitter:image'         => $basicProperties['og:image'],
+			'twitter:image'         => SITE_URL . SCRIPT_PATH . 'thumbnail/' . $id,
 		);
 
 		// Add embedded player card data if domain is whitelisted on Twitter
@@ -101,6 +132,7 @@
 				'twitter:player'        => 'https://www.youtube.com/embed/' . $id,
 				'twitter:player:width'  => $basicProperties['og:video:width'],
 				'twitter:player:height' => $basicProperties['og:video:height'],
+				'twitter:image'         => $basicProperties['og:image'],
 			));
 
 		// Create META tags data
@@ -120,7 +152,7 @@
 			),
 			array(
 				'itemprop' => 'image',
-				'content' => $basicProperties['og:image'],
+				'content' => SITE_URL . SCRIPT_PATH . 'thumbnail/' . $id,
 			),
 		);
 
@@ -150,39 +182,88 @@
 
 		// Add safe OG tags
 		$newMetaData = array_merge($newMetaData, array(
-			//array('property' => 'fb:app_id', 'content' => ''),
-			//array('property' => 'og:url', 'content' => SITE_URL . SCRIPT_PATH . 'simple/' . $id),
+			array('property' => 'og:type', 'content' => EMBED_PLAYER ? 'video.other' : 'article'),
 			array('property' => 'og:site_name', 'content' => preg_replace('@^https?://@', '', SITE_URL)),
-			array('property' => 'og:type', 'content' => 'video'),
 			array('property' => 'og:title', 'content' => $basicProperties['og:title']),
 			array('property' => 'og:description', 'content' => $basicProperties['og:description']),
-			array('property' => 'og:image', 'content' => $basicProperties['og:image']),
-			array('property' => 'og:video', 'content' => 'http://www.youtube.com/v/' . $id . '?version=3'),
-			array('property' => 'og:video:type', 'content' => 'application/x-shockwave-flash'),
-			array('property' => 'og:video:width', 'content' => '560'),
-			array('property' => 'og:video:height', 'content' => '349')
+			array('property' => 'og:image', 'content' => $thumbnailUrl)
 		));
 
-		// Generate HTML
-
-		$canonical = $fbDoc->createElement('link');
-		$canonical->setAttribute('rel', 'canonical');
-		$canonical->setAttribute('href', SITE_URL . SCRIPT_PATH . $id);
-		$fbDoc->getElementsByTagName('head')->item(0)->appendChild($canonical);
-
-		foreach($newMetaData as $metaData)
-		{
-			$meta = $fbDoc->createElement('meta');
-			foreach($metaData as $k => $v)
-				$meta->setAttribute($k, $v);
-
-			$fbDoc->getElementsByTagName('head')->item(0)->appendChild($meta);
+		if (EMBED_PLAYER) {
+			$newMetaData = array_merge($newMetaData, array(
+				array('property' => 'og:video:url', 'content' => 'http://www.youtube.com/v/' . $id . '?version=3'),
+				array('property' => 'og:video:type', 'content' => 'application/x-shockwave-flash'),
+				array('property' => 'og:video:width', 'content' => '560'),
+				array('property' => 'og:video:height', 'content' => '349')
+			));
 		}
 
-		$fbDoc->getElementsByTagName('body')->item(0)->appendChild($fbDoc->createElement('script', 'window.location=\'https://youtu.be/' . $id . '\''));
+		switch ($mode) {
 
-		header('Content-type: text/html; charset=UTF-8');
-		echo str_replace('<?xml encoding="UTF-8">', '', $fbDoc->saveHTML());
+			case MODE_THUMBNAIL:
+				// Generate thumbnail
+				$thumbnailImageUrl = $basicProperties['og:image'];
+
+				$thumbnailImage = @imagecreatefromjpeg($thumbnailImageUrl);
+				if (!$thumbnailImage) {
+					$thumbnailImage = imagecreatetruecolor(1920, 1080);
+				}
+
+				$buttonImage = imagecreatefrompng(dirname(__FILE__) . '/play-button.png');
+				imagealphablending($thumbnailImage, true);
+				imagealphablending($buttonImage, true);
+
+				$tw = imagesx($thumbnailImage);
+				$th = imagesy($thumbnailImage);
+
+				$bw = min($tw, $th);
+				$bh = $bw;
+
+				$bx = ($tw - $bw) / 2;
+				$by = ($th - $bh) / 2;
+
+				imagecopyresampled(
+					$thumbnailImage, $buttonImage,
+					$bx, $by,
+					0, 0,
+					$bw, $bh,
+					1080, 1080);
+
+				ob_start();
+				imagejpeg($thumbnailImage, null, 80);
+				header('Content-type: image/jpeg');
+				header('Content-length: ' . ob_get_length());
+				ob_end_flush();
+
+				exit(0);
+
+				break;
+
+			case MODE_PLAYER:
+			default:
+
+				// Generate player HTML
+
+				$canonical = $fbDoc->createElement('link');
+				$canonical->setAttribute('rel', 'canonical');
+				$canonical->setAttribute('href', SITE_URL . SCRIPT_PATH . $id);
+				$fbDoc->getElementsByTagName('head')->item(0)->appendChild($canonical);
+
+				foreach($newMetaData as $metaData)
+				{
+					$meta = $fbDoc->createElement('meta');
+					foreach($metaData as $k => $v)
+						$meta->setAttribute($k, $v);
+
+					$fbDoc->getElementsByTagName('head')->item(0)->appendChild($meta);
+				}
+
+				$fbDoc->getElementsByTagName('body')->item(0)->appendChild($fbDoc->createElement('script', 'window.location=\'https://youtu.be/' . $id . '\''));
+
+				header('Content-type: text/html; charset=UTF-8');
+				echo str_replace('<?xml encoding="UTF-8">', '', $fbDoc->saveHTML());
+
+		}
 
 		exit(0);
 	}
